@@ -20,7 +20,16 @@ def create_database():
         cur.execute("""CREATE TABLE plates (
                      license_plate text,
                      plate_confidence real,
-                     time real
+                     time real,
+                     make text,
+                     make_confidence real,
+                     model text,
+                     model_confidence real,
+                     colour text,
+                     colour_confidence real,
+                     website_make text,
+                     website_model text,
+                     website_colour text
                      )""")
         print("Successfully created database!")
 
@@ -29,7 +38,7 @@ def create_database():
 
 def extract_frames():
     """ Extracts frames from a video and saves to a directory. """
-    video = "nz_cars_ALPR.mp4"
+    video = "nz_cars_ALPR.mp4" #Provided video file
     save_directory = ""
     cap = cv2.VideoCapture(video)
     frame_rate = cap.get((cv2.CAP_PROP_FPS))
@@ -44,7 +53,7 @@ def extract_frames():
             cv2.imwrite(filename, frame)
             count += 1
     cap.release()
-    print(f"Successfully extracted {} frames!")
+    print(f"Successfully extracted {count} frames!")
 
 def check_thatcar(plate):
     """ Enters the plate into thatcar.nz and scrapes make, model and colour. """
@@ -84,7 +93,7 @@ def process_images():
     for filename in os.listdir(directory):
         if filename.endswith(".jpg"):
             IMAGE_PATH = filename
-            SECRET_KEY = "sk_65527a6200e31fc7bbace328"
+            SECRET_KEY = "sk_f91fa32aff0dfbed67ce3ca0"
 
             with open(IMAGE_PATH, 'rb') as image_file:
                 img_base64 = base64.b64encode(image_file.read())
@@ -106,37 +115,54 @@ def process_images():
                 make_model = json_data["results"][0]["vehicle"]["make_model"][0]["name"].split("_")
                 model = make_model[1]
                 model_confidence = json_data["results"][0]["vehicle"]["make_model"][0]["confidence"]
-        
+
                 colour = json_data["results"][0]["vehicle"]["color"][0]["name"]
+                if "-" in colour:
+                    lst = colour.split("-")
+                    colour = lst[0]
                 colour_confidence = json_data["results"][0]["vehicle"]["color"][0]["confidence"]
 
                 cur.execute(f"SELECT EXISTS(SELECT 1 FROM plates WHERE license_plate='{prediction}')") #Checks whether the plate is already in the database, to prevent duplicate frame data
                 
                 if cur.fetchone()[0] != 1:
-                    instruction = f"INSERT INTO plates VALUES ('{prediction}', {confidence}, {processing_time})"
+
+                    website_make, website_model, website_colour = check_thatcar(prediction)
+
+                    make_result = (website_make == make)
+                    model_result = (website_model == model)
+                    if website_colour != "UNKNOWN":
+                        colour_result = (website_colour == colour)
+                    else:
+                        colour_result = "UNKNOWN"
+
+                    read_result = ""
+                    if make_result == True and model_result == True and colour_result == True:
+                        read_result = "Correct"
+                    else:
+                        read_result = "Incorrect"
+
+                    instruction = (f"INSERT INTO plates VALUES ('{prediction}', {confidence}, {processing_time}, '{make}', {make_confidence}, '{model}', "
+                                   f"{model_confidence}, '{colour}', {colour_confidence}, '{website_make}', '{website_model}', '{website_colour}')"
+                                   )
                     cur.execute(instruction)
 
-                website_make, website_model, website_colour = check_thatcar(prediction)
+                    make = make.capitalize()#For nice formatting
+                    model = model.capitalize()
+                    colour = colour.capitalize()
 
-                make_result = (website_make == make)
-                model_result = (website_model == model)
-                if colour != "UNKNOWN":
-                    colour_result = (website_colour == colour)
-                else:
-                    colour_result = "UNKNOWN"
+                    result.append(f"Image: {filename}\nPlate: {prediction} Confidence: {confidence:.2f} Processing Time: {processing_time:.2f}\n"
+                                  f"Make: {make} Confidence: {make_confidence:.2f}\nModel: {model} Confidence: {model_confidence:.2f}\n"
+                                  f"Colour: {colour} Confidence: {colour_confidence:.2f}\n"
+                                  f"Read Result: {read_result}\n"
+                                  )
+                    
+            else:
+                print(f"OpenALPR could not identify a license plate within {filename}")
 
-                result.append(f"Image: {filename}\nplate: {prediction} confidence: {confidence} processing time: {processing_time}\n"
-                              f"make: {make} confidence: {make_confidence}\nmodel: {model} confidence: {model_confidence}\n"
-                              f"colour: {colour} confidence: {colour_confidence}\n"
-                              f"Details vs thatcar.nz: make: {make_result} model: {model_result} colour: {colour_result}\n"
-                              )
             conn.commit()
             conn.close()
 
-            
-            else:
-                print(f"OpenALPR could not identify a license plate within {filename}\n")
-
+    print() #Whitespace seperator between process prints and actual result
     for i in result:
         print(i)
     
